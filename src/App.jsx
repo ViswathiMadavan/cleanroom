@@ -716,16 +716,21 @@ export default function App() {
     <div style={{ background: C.paper, minHeight: "100vh", color: C.ink, fontFamily: "'IBM Plex Sans', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         input[type=range]{accent-color:${C.clay};} ::selection{background:${C.clay};color:#fff;}
+        html, body{ overflow-x:hidden; max-width:100%; }
+        .recharts-responsive-container{ min-height:280px; }
         @media (max-width: 640px){
           .cr-content{ padding-left:14px !important; padding-right:14px !important; }
           .cr-nav{ padding-left:14px !important; padding-right:14px !important; }
           .cr-header > div{ padding-left:16px !important; padding-right:16px !important; }
         }
         @media print{
-          .cr-header, .cr-nav, .cr-no-print, button{ display:none !important; }
+          .cr-header, .cr-nav, .cr-no-print, button, input, select, summary{ display:none !important; }
           .cr-content{ max-width:100% !important; padding:8px 0 0 !important; }
           body{ background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-          .cr-card{ break-inside:avoid; box-shadow:none !important; }
+          .cr-content, .cr-content *{ color:#000 !important; }
+          .cr-card{ page-break-inside:avoid; break-inside:avoid; box-shadow:none !important; background:#fff !important; border-color:#bbb !important; }
+          .recharts-responsive-container, .recharts-wrapper, .recharts-surface{ width:100% !important; max-width:100% !important; height:auto !important; }
+          .cr-content svg{ max-width:100% !important; }
         }`}</style>
 
       {/* Header */}
@@ -1611,11 +1616,13 @@ function Result({ raw, cleanedData, columns, types, stages, numericCols, textCol
     if (Math.abs(r) >= 0.3) strongPairs.push({ a: numericCols[i], b: numericCols[j], r });
   }
   const topStrong = _.orderBy(strongPairs, (p) => Math.abs(p.r), "desc").slice(0, 3);
+  const [snapCol, setSnapCol] = useState(textCols[0] || "");
+  const snapColEff = snapCol && textCols.includes(snapCol) ? snapCol : (textCols[0] || "");
   const summaryBar = useMemo(() => {
-    const c = textCols[0]; if (!c) return [];
-    const counts = _.countBy(cleanedData.map((r) => String(r[c])));
+    if (!snapColEff) return [];
+    const counts = _.countBy(cleanedData.map((r) => String(r[snapColEff])));
     return _.orderBy(Object.entries(counts).map(([name, value]) => ({ name, value })), "value", "desc").slice(0, 6);
-  }, [cleanedData, textCols]);
+  }, [cleanedData, snapColEff]);
 
   return (
     <div>
@@ -1654,8 +1661,13 @@ function Result({ raw, cleanedData, columns, types, stages, numericCols, textCol
 
       {summaryBar.length > 0 && (
         <Card style={{ marginTop: 18 }}>
-          <H>Snapshot of the full dataset</H>
-          <p style={{ fontSize: 12.5, color: C.inkSoft, marginTop: -6, marginBottom: 10 }}>Distribution of <b>{textCols[0]}</b> across all {after} cleaned rows.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+            <H>Snapshot of the full dataset</H>
+            {textCols.length > 1 && (
+              <label className="cr-no-print" style={{ fontSize: 12.5, color: C.inkSoft }}>Column: <Sel value={snapColEff} set={setSnapCol} opts={textCols} /></label>
+            )}
+          </div>
+          <p style={{ fontSize: 12.5, color: C.inkSoft, marginTop: -6, marginBottom: 10 }}>Distribution of <b>{snapColEff}</b> across all {after} cleaned rows.</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={summaryBar} layout="vertical" margin={{ left: 30 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.line} /><XAxis type="number" tick={{ fontSize: 11, fill: C.inkSoft }} /><YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: C.inkSoft }} width={90} /><Tooltip />
