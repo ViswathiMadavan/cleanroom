@@ -815,6 +815,11 @@ function Collect({ raw, types, onFile, fileRef, loadSample, reset, uploadMsg, lo
   return (
     <div>
       <SectionTitle sub="Upload a CSV file from your users, or load a sample messy dataset to see the whole pipeline work end to end.">Data Collect</SectionTitle>
+      {!raw && (
+        <p style={{ color: C.inkSoft, fontSize: 13.5, margin: "0 0 12px" }}>
+          Drop in a CSV, watch it get cleaned step by step, then download the result — or try the sample dataset to see how it works.
+        </p>
+      )}
       <Card style={{ borderStyle: "dashed", borderColor: C.clay, textAlign: "center", padding: 40, background: "#FBF6EE" }}>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 19, marginBottom: 6 }}>Drop your data in</div>
         <p style={{ color: C.inkSoft, fontSize: 13.5, maxWidth: 440, margin: "0 auto 18px" }}>CSV with a header row. Delimiter is auto-detected; messy headers, blank lines and ragged rows are handled. Everything downstream flows from here.</p>
