@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import _ from "lodash";
 import {
   BarChart, Bar, LineChart, Line, ScatterChart, Scatter,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ReferenceLine,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 
@@ -908,6 +908,106 @@ function PrevDownloads({ stages, currentStep }) {
   );
 }
 
+/* ============================================================
+   OUTLIER BOX-PLOTS
+   ============================================================ */
+const fmtTick = (v) => {
+  const n = Number(v);
+  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return (Math.round(n * 100) / 100).toString();
+};
+
+function boxStats(data, col) {
+  const values = data.map((r) => toNum(r[col])).filter((n) => !isNaN(n));
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const q1 = quantile(sorted, 0.25), q3 = quantile(sorted, 0.75), med = quantile(sorted, 0.5);
+  const iqr = q3 - q1;
+  const lower = q1 - 1.5 * iqr, upper = q3 + 1.5 * iqr;
+  const min = sorted[0], max = sorted[sorted.length - 1];
+  // deterministic jitter (golden-ratio sequence) → a stable strip, no Math.random
+  const points = values.map((v, i) => ({
+    x: v,
+    y: 0.2 + ((i * 0.6180339887) % 1) * 0.6,
+    outlier: v < lower || v > upper,
+  }));
+  const outlierCount = points.filter((p) => p.outlier).length;
+  const pad = (max - min || Math.abs(max) || 1) * 0.06;
+  const domain = [Math.min(min, lower) - pad, Math.max(max, upper) + pad];
+  return { col, q1, q3, med, lower, upper, min, max, points, outlierCount, domain };
+}
+
+function BoxTip({ active, payload, removed }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px",
+      fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, color: C.ink }}>
+      <div>{fmtTick(p.x)}</div>
+      <div style={{ color: p.outlier ? C.clay : C.inkSoft }}>
+        {p.outlier ? (removed ? "outlier · removed" : "outlier") : "within range"}
+      </div>
+    </div>
+  );
+}
+
+function BoxPlot({ stats, removed }) {
+  const label = stats.outlierCount === 0
+    ? "no outliers detected"
+    : `${stats.outlierCount} outlier${stats.outlierCount > 1 ? "s" : ""} ${removed ? "removed" : "detected"}`;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 2 }}>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, fontWeight: 600, color: C.ink }}>{stats.col}</span>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, color: stats.outlierCount ? C.clayDk : C.sage }}>{label}</span>
+      </div>
+      <ResponsiveContainer width="100%" height={150} minHeight={150}>
+        <ScatterChart margin={{ top: 10, right: 18, bottom: 18, left: 10 }}>
+          <XAxis type="number" dataKey="x" domain={stats.domain} tickFormatter={fmtTick}
+            tick={{ fontSize: 11, fill: C.inkSoft, fontFamily: "'IBM Plex Mono', monospace" }} stroke={C.line} />
+          <YAxis type="number" dataKey="y" domain={[0, 1]} hide />
+          <Tooltip cursor={{ stroke: C.line }} content={<BoxTip removed={removed} />} />
+          <ReferenceArea x1={stats.q1} x2={stats.q3} y1={0.3} y2={0.7} fill={C.paper2} fillOpacity={0.9} stroke={C.inkSoft} strokeOpacity={0.55} />
+          <ReferenceLine segment={[{ x: stats.med, y: 0.3 }, { x: stats.med, y: 0.7 }]} stroke={C.ink} strokeWidth={2} />
+          <ReferenceLine segment={[{ x: stats.lower, y: 0.5 }, { x: stats.q1, y: 0.5 }]} stroke={C.inkSoft} strokeOpacity={0.55} />
+          <ReferenceLine segment={[{ x: stats.q3, y: 0.5 }, { x: stats.upper, y: 0.5 }]} stroke={C.inkSoft} strokeOpacity={0.55} />
+          <ReferenceLine segment={[{ x: stats.lower, y: 0.4 }, { x: stats.lower, y: 0.6 }]} stroke={C.inkSoft} strokeOpacity={0.55} />
+          <ReferenceLine segment={[{ x: stats.upper, y: 0.4 }, { x: stats.upper, y: 0.6 }]} stroke={C.inkSoft} strokeOpacity={0.55} />
+          <Scatter data={stats.points} isAnimationActive={false}>
+            {stats.points.map((p, i) => (
+              <Cell key={i} fill={p.outlier ? C.clay : C.inkSoft} fillOpacity={p.outlier ? 0.95 : 0.4}
+                stroke={p.outlier ? C.clayDk : "none"} strokeWidth={p.outlier ? 1 : 0} />
+            ))}
+          </Scatter>
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function BoxPlots({ data, numericCols, removed }) {
+  const key = numericCols.join("|");
+  const stats = useMemo(
+    () => numericCols.map((c) => boxStats(data, c)).filter(Boolean),
+    [data, key]
+  );
+  if (!stats.length) return null;
+  const swatch = (color, muted) => (
+    <span style={{ width: 10, height: 10, borderRadius: 5, background: color, opacity: muted ? 0.4 : 1, display: "inline-block" }} />
+  );
+  return (
+    <div style={{ marginTop: 2, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 10,
+        fontSize: 11.5, fontFamily: "'IBM Plex Mono', monospace", color: C.inkSoft }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{swatch(C.clay)} {removed ? "removed outlier" : "outlier"}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{swatch(C.inkSoft, true)} within range</span>
+        <span>▭ IQR box · │ median · ├─┤ 1.5×IQR whiskers</span>
+      </div>
+      {stats.map((s) => <BoxPlot key={s.col} stats={s} removed={removed} />)}
+    </div>
+  );
+}
+
 function CleanStep(props) {
   const { sub, stages, inputFor, types, dropCols, setDropCols, structCols, setStructCols, textCols, manualRules, setManualRules,
     missThreshold, setMissThreshold, missMethod, setMissMethod, datePair, setDatePair, dateCols, allCols, run, goNext, raw } = props;
@@ -1165,6 +1265,7 @@ function CleanStep(props) {
           <FlowBar inputCount={input?.length || 0} outputCount={stage?.data.length} />
           <PrevDownloads stages={stages} currentStep={sub} />
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", fontSize: 13, color: C.inkSoft, marginBottom: 14 }}>Numeric columns scanned:&nbsp;{inputCols.filter((c) => types[c] === "numeric").map((c) => <Pill key={c}>{c}</Pill>)}</div>
+          <BoxPlots data={input} numericCols={inputCols.filter((c) => types[c] === "numeric")} removed={!!stage} />
           <Btn onClick={run.outliers}>Detect & remove outliers</Btn>
           {stage && (
             <div style={{ marginTop: 20 }}>
