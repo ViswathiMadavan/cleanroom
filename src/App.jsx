@@ -590,7 +590,7 @@ const CLEAN_SUBS = [
   { id: "validate", label: "5 · Validate" },
 ];
 const ANALYZE_SUBS = [
-  { id: "patterns", label: "Patterns & Trends" },
+  { id: "patterns", label: "Patterns & Distributions" },
   { id: "correlation", label: "Correlation" },
   { id: "anomaly", label: "Anomaly" },
 ];
@@ -1363,6 +1363,79 @@ function Analyze({ sub, data, columns, types, isClean }) {
   );
 }
 
+function numericHistogram(nums) {
+  if (!nums.length) return [];
+  const min = Math.min(...nums), max = Math.max(...nums);
+  if (!isFinite(min) || !isFinite(max)) return [];
+  const distinct = new Set(nums).size;
+  if (min === max) return [{ x0: min, x1: max, mid: min, label: fmtTick(min), count: nums.length }];
+  const binCount = Math.min(10, Math.max(1, distinct));   // 8–10 bins, fewer for low-cardinality
+  const width = (max - min) / binCount;
+  const bins = Array.from({ length: binCount }, (_, i) => {
+    const x0 = min + i * width, x1 = min + (i + 1) * width;
+    return { x0, x1, mid: (x0 + x1) / 2, label: fmtTick(x0), count: 0 };
+  });
+  nums.forEach((v) => {
+    let i = Math.floor((v - min) / width);
+    if (i >= binCount) i = binCount - 1;
+    if (i < 0) i = 0;
+    bins[i].count++;
+  });
+  return bins;
+}
+
+function monthHistogram(values) {
+  const dates = values.map((v) => new Date(v)).filter((d) => !isNaN(d.getTime()));
+  if (dates.length < 8) return [];                          // not enough dates → skip
+  const keys = dates.map((d) => d.getFullYear() * 12 + d.getMonth());
+  const minK = Math.min(...keys), maxK = Math.max(...keys);
+  if (maxK - minK < 1) return [];                           // all one month → skip
+  const counts = {};
+  keys.forEach((k) => { counts[k] = (counts[k] || 0) + 1; });
+  const out = [];
+  for (let k = minK; k <= maxK; k++) {
+    out.push({ label: `${Math.floor(k / 12)}-${String((k % 12) + 1).padStart(2, "0")}`, count: counts[k] || 0 });
+  }
+  return out;
+}
+
+function HistTip({ active, payload }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 6, padding: "3px 8px",
+      fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: C.ink }}>
+      {p.label} · <b>{p.count}</b>
+    </div>
+  );
+}
+
+function MiniHistogram({ data, color, mean }) {
+  if (!data.length) return null;
+  // mean line overlaid by value→width fraction; bins tile [min,max] linearly so this aligns with the bars
+  let meanPct = null;
+  if (mean != null && data.length > 1 && data[0].x0 != null) {
+    const lo = data[0].x0, hi = data[data.length - 1].x1;
+    if (hi > lo) meanPct = Math.max(0, Math.min(100, ((mean - lo) / (hi - lo)) * 100));
+  }
+  return (
+    <div style={{ position: "relative", width: "100%", margin: "2px 0 10px" }}>
+      <ResponsiveContainer width="100%" height={80} minHeight={80}>
+        <BarChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barCategoryGap={1}>
+          <XAxis dataKey="label" hide />
+          <YAxis hide />
+          <Tooltip cursor={{ fill: "rgba(33,28,22,0.05)" }} content={<HistTip />} />
+          <Bar dataKey="count" fill={color} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+      {meanPct != null && (
+        <div title={`mean ${+mean.toFixed(2)}`} style={{ position: "absolute", top: 4, bottom: 0,
+          left: `${meanPct}%`, width: 0, borderLeft: `1.5px dashed ${C.clay}`, pointerEvents: "none" }} />
+      )}
+    </div>
+  );
+}
+
 function MiniBox({ s }) {
   const range = s.max - s.min || 1;
   const pos = (x) => ((x - s.min) / range) * 100;
@@ -1387,15 +1460,15 @@ function Patterns({ data, columns, types }) {
   const cards = useMemo(() => columns.map((col) => {
     if (types[col] === "numeric") {
       const nums = data.map((r) => toNum(r[col])).filter((n) => !isNaN(n));
-      return { col, type: "numeric", s: nums.length ? numericSummary(nums) : null };
+      return { col, type: "numeric", s: nums.length ? numericSummary(nums) : null, hist: nums.length ? numericHistogram(nums) : [] };
     }
     const vals = data.map((r) => (isMissing(r[col]) ? null : String(r[col]))).filter((v) => v !== null);
-    return { col, type: types[col], s: catSummary(vals) };
+    return { col, type: types[col], s: catSummary(vals), months: types[col] === "date" ? monthHistogram(vals) : [] };
   }), [data, columns, types]);
 
   return (
     <div>
-      <SectionTitle sub="A read on the shape of every column — distribution, spread and concentration — with the most notable findings called out first.">Patterns & Trends</SectionTitle>
+      <SectionTitle sub="A read on the shape of every column — distribution, spread and concentration — with the most notable findings called out first.">Patterns & Distributions</SectionTitle>
 
       {headlines.length > 0 && (
         <Card style={{ marginBottom: 18, background: "#FBF6EE" }}>
@@ -1418,6 +1491,7 @@ function Patterns({ data, columns, types }) {
             </div>
             {p.type === "numeric" ? (p.s ? (
               <div>
+                <MiniHistogram data={p.hist} color={C.blue} mean={p.s.mean} />
                 <MiniBox s={p.s} />
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, margin: "10px 0" }}>
                   {[["min", p.s.min], ["Q1", p.s.q1], ["median", p.s.median], ["mean", p.s.mean], ["Q3", p.s.q3], ["max", p.s.max], ["std", p.s.std], ["IQR", p.s.iqr], ["CV", (p.s.cv * 100)]].map(([k, v]) => (
@@ -1428,6 +1502,7 @@ function Patterns({ data, columns, types }) {
               </div>
             ) : <span style={{ color: C.inkSoft, fontSize: 13 }}>No numeric values.</span>) : (
               <div>
+                {p.type === "date" && p.months.length > 0 && <MiniHistogram data={p.months} color={C.sage} />}
                 <div style={{ fontSize: 11.5, color: C.inkSoft, marginBottom: 8, fontFamily: "'IBM Plex Mono', monospace" }}>{p.s.distinct} distinct values · top {Math.min(p.s.top.length, 6)}</div>
                 {p.s.top.map((t) => (
                   <div key={t.value} style={{ marginBottom: 7 }}>
